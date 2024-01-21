@@ -10,6 +10,9 @@
 use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+const PACKET_HEADER_SIZE: i32 = 8;
+const PACKET_PADDING_SIZE: i32 = 2;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PacketType {
     Auth,
@@ -88,19 +91,18 @@ impl Packet {
         let id = i32::from_le_bytes(buf);
         r.read_exact(&mut buf).await?;
         let ptype = i32::from_le_bytes(buf);
-        let body_length = length - 10;
-        let mut body_buffer = Vec::with_capacity(body_length as usize);
+        let body_length = length - PACKET_HEADER_SIZE;
+        let mut body_buffer = vec![0; body_length as usize];
 
-        r.take(body_length as u64)
-            .read_to_end(&mut body_buffer)
-            .await?;
+        // Read packet body based on the calculated length, ensuring correct handling of variable sized packets
+        let body_length = r.read(&mut body_buffer).await?;
+        let length = body_length as i32 + PACKET_HEADER_SIZE + PACKET_PADDING_SIZE;
+
+        // terminating nulls
+        body_buffer.truncate(body_length - PACKET_PADDING_SIZE as usize);
 
         let body = String::from_utf8(body_buffer)
             .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-
-        // terminating nulls
-        let mut buf = [0u8; 2];
-        r.read_exact(&mut buf).await?;
 
         let packet = Packet {
             length,
